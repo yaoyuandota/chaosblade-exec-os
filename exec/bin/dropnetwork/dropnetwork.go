@@ -27,13 +27,14 @@ import (
 	"github.com/chaosblade-io/chaosblade-exec-os/exec/bin"
 )
 
-var dropSourcePort, dropDestinationPort, dropStringPattern, dropNetworkTraffic string
+var dropSourcePort, dropDestinationPort, dropStringPattern, dropDestinationIp, dropNetworkTraffic string
 var dropNetStart, dropNetStop bool
 
 func main() {
 	flag.StringVar(&dropSourcePort, "source-port", "", "source port")
 	flag.StringVar(&dropDestinationPort, "destination-port", "", "destination port")
 	flag.StringVar(&dropStringPattern, "string-pattern", "", "string pattern")
+	flag.StringVar(&dropDestinationIp, "destination-ip", "", "destination ip")
 	flag.StringVar(&dropNetworkTraffic, "network-traffic", "", "network traffic")
 	flag.BoolVar(&dropNetStart, "start", false, "start drop")
 	flag.BoolVar(&dropNetStop, "stop", false, "stop drop")
@@ -43,9 +44,9 @@ func main() {
 		bin.PrintErrAndExit("must add --start or --stop flag")
 	}
 	if dropNetStart {
-		startDropNet(dropSourcePort, dropDestinationPort, dropStringPattern, dropNetworkTraffic)
+		startDropNet(dropSourcePort, dropDestinationPort, dropStringPattern, dropDestinationIp, dropNetworkTraffic)
 	} else if dropNetStop {
-		stopDropNet(dropSourcePort, dropDestinationPort, dropStringPattern, dropNetworkTraffic)
+		stopDropNet(dropSourcePort, dropDestinationPort, dropStringPattern, dropDestinationIp, dropNetworkTraffic)
 	} else {
 		bin.PrintErrAndExit("less --start or --stop flag")
 	}
@@ -55,16 +56,16 @@ var cl = channel.NewLocalChannel()
 
 var stopDropNetFunc = stopDropNet
 
-func startDropNet(sourcePort, destinationPort, stringPattern, networkTraffic string) {
+func startDropNet(sourcePort, destinationPort, stringPattern, destination, networkTraffic string) {
 	ctx := context.Background()
 	if destinationPort == "" && sourcePort == "" && stringPattern == "" {
 		bin.PrintErrAndExit("must specify port or string flag")
 		return
 	}
-	handleDropSpecifyPort(destinationPort, sourcePort, stringPattern, networkTraffic, ctx)
+	handleDropSpecifyPort(destinationPort, sourcePort, stringPattern, destination, networkTraffic, ctx)
 }
 
-func handleDropSpecifyPort(destinationPort string, sourcePort string, stringPattern string, networkTraffic string, ctx context.Context) {
+func handleDropSpecifyPort(destinationPort string, sourcePort string, stringPattern string, destinationIp string, networkTraffic string, ctx context.Context) {
 	var response *spec.Response
 	netFlows := []string{"INPUT", "OUTPUT"}
 	if networkTraffic == "in" {
@@ -88,17 +89,21 @@ func handleDropSpecifyPort(destinationPort string, sourcePort string, stringPatt
 			tcpArgs = fmt.Sprintf("%s -m string --string %s --algo bm", tcpArgs, stringPattern)
 			udpArgs = fmt.Sprintf("%s -m string --string %s --algo bm", udpArgs, stringPattern)
 		}
+		if destinationIp != "" {
+			tcpArgs = fmt.Sprintf("%s -d %s", tcpArgs, destinationIp)
+			udpArgs = fmt.Sprintf("%s -d %s", udpArgs, destinationIp)
+		}
 		tcpArgs = fmt.Sprintf("%s -j DROP", tcpArgs)
 		udpArgs = fmt.Sprintf("%s -j DROP", udpArgs)
 		response = cl.Run(ctx, "iptables", fmt.Sprintf(`%s`, tcpArgs))
 		if !response.Success {
-			stopDropNetFunc(sourcePort, destinationPort, stringPattern, networkTraffic)
+			stopDropNetFunc(sourcePort, destinationPort, stringPattern, destinationIp, networkTraffic)
 			bin.PrintErrAndExit(response.Err)
 			return
 		}
 		response = cl.Run(ctx, "iptables", fmt.Sprintf(`%s`, udpArgs))
 		if !response.Success {
-			stopDropNetFunc(sourcePort, destinationPort, stringPattern, networkTraffic)
+			stopDropNetFunc(sourcePort, destinationPort, stringPattern, destinationIp, networkTraffic)
 			bin.PrintErrAndExit(response.Err)
 			return
 		}
@@ -106,7 +111,7 @@ func handleDropSpecifyPort(destinationPort string, sourcePort string, stringPatt
 	bin.PrintOutputAndExit(response.Result.(string))
 }
 
-func stopDropNet(sourcePort, destinationPort, stringPattern, networkTraffic string) {
+func stopDropNet(sourcePort, destinationPort, stringPattern, destinationIp, networkTraffic string) {
 	ctx := context.Background()
 	var response *spec.Response
 	netFlows := []string{"INPUT", "OUTPUT"}
@@ -130,6 +135,10 @@ func stopDropNet(sourcePort, destinationPort, stringPattern, networkTraffic stri
 		if stringPattern != "" {
 			tcpArgs = fmt.Sprintf("%s -m string --string %s --algo bm", tcpArgs, stringPattern)
 			udpArgs = fmt.Sprintf("%s -m string --string %s --algo bm", udpArgs, stringPattern)
+		}
+		if destinationIp != "" {
+			tcpArgs = fmt.Sprintf("%s -d %s", tcpArgs, destinationIp)
+			udpArgs = fmt.Sprintf("%s -d %s", udpArgs, destinationIp)
 		}
 		tcpArgs = fmt.Sprintf("%s -j DROP", tcpArgs)
 		udpArgs = fmt.Sprintf("%s -j DROP", udpArgs)
